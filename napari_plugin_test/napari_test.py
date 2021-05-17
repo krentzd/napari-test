@@ -80,7 +80,3 @@ def make_log_segmentation(
     _log_segmentation(input=input,
                       sigma=sigma,
                       threshold=threshold)
-
-@napari_hook_implementation
-def napari_experimental_provide_dock_widget():
-    return make_log_segmentation
