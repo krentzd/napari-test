@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 # coding: utf-8
-from napari_plugin_engine import napari_hook_implementation
 from scipy.ndimage import gaussian_filter1d
 import numpy as np
 from skimage import exposure
 from napari.qt.threading import thread_worker
-from magicgui import magicgui, magic_factory, widgets
+from magicgui import magic_factory, widgets
 import napari
 from napari.types import LabelsData, ImageData
 from skimage import feature
-from magicgui.tqdm import trange
 from typing_extensions import Annotated
+
 
 @magic_factory
 def make_log_segmentation(
@@ -46,7 +45,7 @@ def make_log_segmentation(
 
     def _slice_adaptive_thresholding(img, thresh):
         thresh_img = []
-        for i in trange(img.shape[0]):
+        for i in range(img.shape[0]):
             slice = exposure.rescale_intensity(img[i], out_range='uint8')
             slice_thresh = np.sum(slice) / (slice.shape[0] * slice.shape[1]) * thresh
             slice[slice < slice_thresh] = 0
