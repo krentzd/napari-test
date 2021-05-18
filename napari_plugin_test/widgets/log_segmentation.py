@@ -15,8 +15,8 @@ from typing_extensions import Annotated
 def make_log_segmentation(
     viewer: "napari.viewer.Viewer",
     input: ImageData,
-    sigma: Annotated[float, {"min": 0.5, "max": 20, "step": 0.5}] = 3,
-    threshold: Annotated[float, {"min": 0, "max": 20, "step": 0.1}] =1.2
+    sigma: Annotated[float, {"min": 0.5, "max": 20, "step": 0.5}]=3,
+    threshold: Annotated[float, {"min": 0, "max": 20, "step": 0.1}]=1.2
 ):
     from napari.qt import thread_worker
 

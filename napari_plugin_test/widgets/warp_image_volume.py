@@ -1,20 +1,16 @@
 #!/usr/bin/env python3
 # coding: utf-8
+# Adapted from: https://github.com/zpincus/celltool/blob/master/celltool/numerics/image_warp.py
+
 from scipy import ndimage
 import numpy as np
 from probreg import bcpd
 import tifffile
 import matplotlib.pyplot as plt
 import napari
-from magicgui import magicgui
-from napari.layers import Points, Image
-
-# Adapted from: https://github.com/zpincus/celltool/blob/master/celltool/numerics/image_warp.py
-def warp_images(from_points, to_points, image, output_region, interpolation_order=5, approximate_grid=10):
-    print('Entered warp_images')
-    transform = _make_inverse_warp(from_points, to_points, output_region, approximate_grid)
-    # return [ndimage.map_coordinates(np.asarray(image), transform, order=interpolation_order) for image in images]
-    return ndimage.map_coordinates(np.asarray(image), transform, order=interpolation_order)
+from magicgui import magic_factory, widgets
+from napari.types import PointsData, ImageData
+from typing_extensions import Annotated
 
 def _make_inverse_warp(from_points, to_points, output_region, approximate_grid):
     x_min, y_min, z_min, x_max, y_max, z_max = output_region
@@ -105,21 +101,48 @@ def _make_warp(from_points, to_points, x_vals, y_vals, z_vals):
     np.seterr(**err)
     return [x_warp, y_warp, z_warp]
 
-@magicgui(call_button='Warp')
-def warp_image_volume(moving_image: Image,
-                      fixed_image: Image,
-                      moving_points: Points,
-                      transformed_points: Points,
-                      interpolation_order: int=1,
-                      approximate_grid: int=2) -> Image:
-    print('Called warp function')
-    assert len(moving_points.data) == len(transformed_points.data), 'Moving and transformed points must be of same length.'
+@magic_factory
+def make_image_warping(
+    viewer: "napari.viewer.Viewer",
+    moving_image: ImageData,
+    fixed_image: ImageData,
+    moving_points: PointsData,
+    transformed_points: PointsData,
+    interpolation_order: Annotated[int, {"min": 0, "max": 10, "step": 1}]=1,
+    approximate_grid: Annotated[int, {"min": 1, "max": 10, "step": 1}]=1
+):
 
-    output_region = (0, 0, 0, int(fixed_image.data.shape[0] / 1), int(fixed_image.data.shape[1] / 1), int(fixed_image.data.shape[2] / 1))
+    from napari.qt import thread_worker
+    pbar = widgets.ProgressBar()
+    pbar.range = (0, 0)  # unknown duration
+    make_image_warping.insert(0, pbar)  # add progress bar to the top of widget
+
+    # this function will be called after we return
+    def _add_data(return_value, self=make_image_warping):
+        data, kwargs = return_value
+        viewer.add_image(data, **kwargs)
+        self.pop(0).hide()  # remove the progress bar
+
+    @thread_worker(connect={"returned": _add_data})
+    def _warp_images(from_points, to_points, image, output_region, interpolation_order=5, approximate_grid=10):
+        print('Entered warp_images')
+        transform = _make_inverse_warp(from_points, to_points, output_region, approximate_grid)
+        warped_image = ndimage.map_coordinates(np.asarray(image), transform, order=interpolation_order)
+        kwargs = dict(
+            name='warped_image'
+        )
+        return (warped_image, kwargs)
+
+
+    print('Warping image volume')
+    assert len(moving_points) == len(transformed_points), 'Moving and transformed points must be of same length.'
+
+    output_region = (0, 0, 0, int(fixed_image.shape[0] / 1), int(fixed_image.shape[1] / 1), int(fixed_image.shape[2] / 1))
     print(output_region)
-    return Image(warp_images(moving_points.data,
-                             transformed_points.data,
-                             moving_image.data,
-                             output_region=output_region,
-                             interpolation_order=interpolation_order,
-                             approximate_grid=approximate_grid))
+
+    _warp_images(from_points=moving_points,
+                to_points=transformed_points,
+                image=moving_image,
+                output_region=output_region,
+                interpolation_order=interpolation_order,
+                approximate_grid=approximate_grid)

@@ -5,12 +5,10 @@ import numpy as np
 import open3d as o3
 import transforms3d as t3d
 import time
-from napari.layers import Points
-from magicgui import magicgui
-import matplotlib.pyplot as plt
-from scipy import ndimage
+from napari.types import PointsData
+from magicgui import magic_factory, widgets
 import napari
-import copy
+from typing_extensions import Annotated
 
 class RegistrationProgressCallback(object):
     def __init__(self, maxiter):
@@ -35,43 +33,67 @@ def prepare_source_and_target_nonrigid_3d(source_array,
     target = target.uniform_down_sample(every_k_points=every_k_points)
     return source, target
 
-@magicgui(call_button='Register')
-def point_cloud_registration(moving: Points,
-                             fixed: Points,
-                             viewer: 'napari.viewer.Viewer',
-                             voxel_size: float=5,
-                             every_k_points: int=2,
-                             max_iterations: int=50,
-                             visualise: bool=False,) -> Points:
-    start = time.time()
-    source, target = prepare_source_and_target_nonrigid_3d(moving.data,
-                                                           fixed.data,
-                                                           voxel_size=voxel_size,
-                                                           every_k_points=every_k_points)
+# Add choice of registratoon method and advanced settings
+@magic_factory
+def make_point_cloud_registration(
+    viewer: "napari.viewer.Viewer",
+    moving: PointsData,
+    fixed: PointsData,
+    voxel_size: Annotated[int, {"min": 1, "max": 1000, "step": 1}] = 5,
+    every_k_points: Annotated[int, {"min": 1, "max": 1000, "step": 1}] = 1,
+    max_iterations: Annotated[int, {"min": 1, "max": 1000, "step": 1}] = 50
+):
 
-    viewer.add_points(np.asarray(source.points),
-                      name='moving_points',
-                      size=5,
-                      face_color='red')
+    from napari.qt import thread_worker
 
-    viewer.add_points(np.asarray(target.points),
-                      name='fixed_points',
-                      size=5,
-                      face_color='green')
-    cbs = []
-    cbs.append(RegistrationProgressCallback(max_iterations))
-    if visualise:
-        cbs.append(callbacks.Open3dVisualizerCallback(np.asarray(source.points), np.asarray(target.points)))
-    tf_param = bcpd.registration_bcpd(source, target, maxiter=max_iterations, callbacks=cbs)
-    elapsed = time.time() - start
-    print("time: ", elapsed)
-    print("result: ", np.rad2deg(t3d.euler.mat2euler(tf_param.rigid_trans.rot)),
-          tf_param.rigid_trans.scale, tf_param.rigid_trans.t, tf_param.v)
+    pbar = widgets.ProgressBar()
+    pbar.range = (0, 0)  # unknown duration
+    make_point_cloud_registration.insert(0, pbar)  # add progress bar to the top of widget
 
-    transformed = tf_param._transform(source.points)
-    transformed_pnts = Points(transformed)
-    transformed_pnts.edge_color = moving.edge_color
-    transformed_pnts.face_color = 'blue'
-    transformed_pnts.size = 5
-    transformed_pnts.name = 'transformed_points'
-    return transformed_pnts
+    # this function will be called after we return
+    def _add_data(return_value, self=make_point_cloud_registration):
+        moving, fixed, transformed = return_value
+        viewer.add_points(moving,
+                          name='moving_points',
+                          size=5,
+                          face_color='red')
+        viewer.add_points(fixed,
+                          name='fixed_points',
+                          size=5,
+                          face_color='green')
+        viewer.add_points(transformed,
+                          name='transformed_points',
+                          face_color='blue',
+                          size=5)
+        self.pop(0).hide()  # remove the progress bar
+
+    @thread_worker(connect={"returned": _add_data})
+    def _point_cloud_registration(moving: PointsData,
+                                  fixed: PointsData,
+                                  voxel_size: int=5,
+                                  every_k_points: int=1,
+                                  max_iterations: int=50):
+        start = time.time()
+        source, target = prepare_source_and_target_nonrigid_3d(moving,
+                                                               fixed,
+                                                               voxel_size=voxel_size,
+                                                               every_k_points=every_k_points)
+        cbs = []
+        cbs.append(RegistrationProgressCallback(max_iterations))
+        # if visualise:
+            # cbs.append(callbacks.Open3dVisualizerCallback(np.asarray(source.points), np.asarray(target.points)))
+        tf_param = bcpd.registration_bcpd(source, target, maxiter=max_iterations, callbacks=cbs)
+        elapsed = time.time() - start
+        print("time: ", elapsed)
+        print("result: ", np.rad2deg(t3d.euler.mat2euler(tf_param.rigid_trans.rot)),
+              tf_param.rigid_trans.scale, tf_param.rigid_trans.t, tf_param.v)
+
+        return (np.asarray(source.points),
+                np.asarray(target.points),
+                tf_param._transform(source.points))
+
+    _point_cloud_registration(moving=moving,
+                              fixed=fixed,
+                              voxel_size=voxel_size,
+                              every_k_points=every_k_points,
+                              max_iterations=max_iterations)
